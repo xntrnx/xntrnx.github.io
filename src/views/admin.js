@@ -66,6 +66,13 @@ function workFields(w, error) {
     </div>
     <div class="field"><label for="f-description">Descripción <small>(opcional)</small></label>
       <textarea id="f-description" name="description" rows="5" maxlength="4000">${w.description ?? ''}</textarea></div>
+    ${field({ label: 'Tipo de objeto', name: 'artform', value: w.artform, error, hint: 'Pintura, dibujo, grabado, escultura… Aparece en el certificado.' })}
+    <div class="field"><label for="f-inscriptions">Inscripciones y marcas <small>(opcional)</small></label>
+      <textarea id="f-inscriptions" name="inscriptions" rows="2" maxlength="600">${w.inscriptions ?? ''}</textarea>
+      <p class="hint">Dónde y cómo está firmada, fechada o sellada. Ej. «Firmada y fechada al reverso, ángulo inferior derecho».</p></div>
+    <div class="field"><label for="f-features">Rasgos distintivos <small>(opcional)</small></label>
+      <textarea id="f-features" name="features" rows="2" maxlength="600">${w.features ?? ''}</textarea>
+      <p class="hint">Lo que permite reconocer ESTA pieza y no otra: una textura, una reparación, una marca en el bastidor. Solo aparece en el certificado.</p></div>
     ${field({ label: 'Orden en la galería', name: 'position', value: w.position ?? 0, error, hint: 'Número menor aparece primero.', attrs: 'inputmode="numeric"' })}`;
 }
 
@@ -116,17 +123,29 @@ export function workEditPage(req, { work, auction, orders, error = null, values 
     </form>
 
     <h2>Certificado de autenticidad</h2>
-    <p>Estado: <strong>${work.certificate_json ? 'publicado' : 'sin certificado'}</strong>${work.certificate_json ? html` · <a class="link" href="/obra/${work.code}/certificado">ver verificación</a>` : ''}</p>
-    <ol class="steps">
-      <li><a class="link" href="/admin/obras/${work.id}/ficha.json" download="${work.code}.json">Descarga la ficha sin firmar</a> (incluye la huella de cada foto).</li>
-      <li>Fírmala en tu computadora, sin conexión: <code>npm run cert:sign -- ${work.code}.json</code></li>
-      <li>Sube aquí la ficha firmada. El servidor comprueba la firma antes de publicarla; tu llave privada nunca sale de tu equipo.</li>
-    </ol>
-    <form method="post" action="/admin/obras/${work.id}/certificado" enctype="multipart/form-data" class="form tight">
-      <div class="field"><label for="f-cert">Ficha firmada (.json)</label>
-        <input id="f-cert" type="file" name="cert" accept="application/json,.json" required></div>
-      <button class="btn ghost" type="submit">Publicar certificado</button>
-    </form>
+    <p>Estado: <strong>${work.certificate_json ? 'publicado' : 'sin certificado'}</strong>${work.certificate_json ? html` · <a class="link" href="/obra/${work.code}/certificado">ver certificado</a>` : ''}</p>
+    <p class="note">El certificado es una credencial verificable (estándar W3C) firmada con tu llave privada. Vuelve a firmar cada vez que cambien los datos, las fotos o el propietario de la obra.</p>
+    <div class="method" id="cert-sign" data-work="${work.id}" data-code="${work.code}">
+      <h3>Firmar y publicar aquí</h3>
+      <div class="field"><label for="f-key">Tu llave privada (<code>private-key.pem</code>)</label>
+        <input id="f-key" type="file" accept=".pem,application/x-pem-file,text/plain"></div>
+      <button class="btn" type="button" id="cert-sign-btn">Firmar y publicar certificado</button>
+      <p class="err" id="cert-sign-msg" role="alert" hidden></p>
+      <p class="fine">La llave se lee y se usa solo dentro de este navegador para calcular la firma: <strong>no se sube ni se guarda en el servidor</strong>. Hazlo desde tu propio equipo.</p>
+    </div>
+    <details>
+      <summary>Firmar con la línea de comandos (alternativa)</summary>
+      <ol class="steps">
+        <li><a class="link" href="/admin/obras/${work.id}/credencial.json" download="${work.code}.json">Descarga la credencial sin firmar</a>.</li>
+        <li>Fírmala en tu equipo: <code>npm run cert:sign -- ${work.code}.json</code></li>
+        <li>Sube aquí el archivo firmado.</li>
+      </ol>
+      <form method="post" action="/admin/obras/${work.id}/certificado" enctype="multipart/form-data" class="form tight">
+        <div class="field"><label for="f-cert">Credencial firmada (.json)</label>
+          <input id="f-cert" type="file" name="cert" accept="application/json,.json" required></div>
+        <button class="btn ghost" type="submit">Publicar certificado</button>
+      </form>
+    </details>
 
     <h2>Subasta</h2>
     ${auction ? html`<p>Subasta #${auction.id}: <strong>${auction.status === 'live' ? 'en curso' : 'programada'}</strong>. Abre ${fmtDateTime(auction.starts_at)}; cierra ${fmtDateTime(auction.ends_at)}.</p>
@@ -153,7 +172,7 @@ export function workEditPage(req, { work, auction, orders, error = null, values 
     <ul class="olist">${orders.map((o) => html`<li><a class="link" href="/admin/pedidos/${o.code}">${o.code}</a><span>${STATUS_LABEL[o.status]}</span><span>${fmtMoney(o.total_cents)}</span><span class="m">${fmtDate(o.created_at)}</span></li>`)}</ul>` : ''}
 
     <h2 class="danger">Borrar</h2>
-    <form method="post" action="/admin/obras/${work.id}/eliminar" data-confirm="¿Borrar la obra y sus fotos de forma definitiva?"><button class="btn danger" type="submit">Borrar obra</button></form>`, ['admin.js']);
+    <form method="post" action="/admin/obras/${work.id}/eliminar" data-confirm="¿Borrar la obra y sus fotos de forma definitiva?"><button class="btn danger" type="submit">Borrar obra</button></form>`, ['admin.js', 'vc.js', 'cert-sign.js']);
 }
 
 export function auctionsAdminPage(req, rows) {

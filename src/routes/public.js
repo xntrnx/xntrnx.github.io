@@ -3,7 +3,8 @@ import { Router } from 'express';
 import { getPublic, listPublic } from '../services/works.js';
 import { listAuctions, publicState, registrationOf, getAuction } from '../services/auctions.js';
 import { createPrivacyRequest } from '../services/users.js';
-import { verifyCertificate } from '../lib/cert.js';
+import QRCode from 'qrcode';
+import { verifyCertificate, didWeb, didDocument } from '../lib/cert.js';
 import { AppError } from '../lib/util.js';
 import { rateLimit } from '../http.js';
 import { errorPage } from '../views/layout.js';
@@ -52,15 +53,41 @@ export function publicRoutes(ctx) {
     res.type('application/json').send(work.certificate_json);
   });
 
-  r.get('/obra/:code/certificado', (req, res) => {
+  r.get('/obra/:code/certificado', async (req, res) => {
     const work = getPublic(ctx, req.params.code);
     if (!work) return notFound(req, res);
     if (!work.certificate_json) return notFound(req, res, 'Esta obra todavía no tiene un certificado publicado.');
-    const serverCheck = verifyCertificate(JSON.parse(work.certificate_json), ctx.keys());
-    send(res, certificatePage(req, { work, serverCheck }));
+    const cert = JSON.parse(work.certificate_json);
+    const serverCheck = verifyCertificate(cert, ctx.keys(), { did: didWeb(ctx.config.baseUrl) });
+    const url = `${ctx.config.baseUrl}/obra/${work.code}/certificado`;
+    const qr = await QRCode.toString(url, { type: 'svg', margin: 0, errorCorrectionLevel: 'M', color: { dark: '#1c2333ff', light: '#ffffff00' } });
+    send(res, certificatePage(req, { work, cert, serverCheck, qr, url }));
   });
 
   r.get('/verificar', (req, res) => send(res, certificatePage(req)));
+
+  // Identidad del emisor (did:web): documento DID con las llaves públicas de firma.
+  r.get('/.well-known/did.json', (req, res) => {
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.type('application/did+json').send(JSON.stringify(didDocument(didWeb(ctx.config.baseUrl), ctx.keys()), null, 2));
+  });
+
+  // Vocabulario propio del certificado (los demás términos son de schema.org).
+  r.get('/ns/coa', (req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.json({
+      '@context': { rdfs: 'http://www.w3.org/2000/01/rdf-schema#' },
+      '@id': `${ctx.config.baseUrl}/ns/coa`,
+      'rdfs:comment': 'Terms used by certificates of authenticity issued by this site. All other terms come from https://schema.org/ (VisualArtwork).',
+      terms: {
+        ArtworkAuthenticityCredential: 'Verifiable Credential in which the artist attests that the described artwork is an original work of their authorship.',
+        inscriptions: 'Object ID "Inscriptions and Markings": signatures, dates, stamps or labels on the object.',
+        distinguishingFeatures: 'Object ID "Distinguishing Features": characteristics that identify this particular object.',
+        currentOwner: 'Owner of the artwork when the credential was issued, or "Colección privada" when the owner chose not to be named.',
+      },
+    });
+  });
 
   // Historial público de llaves de firma (solo llaves públicas).
   r.get('/llaves.json', (req, res) => {

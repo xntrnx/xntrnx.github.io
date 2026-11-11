@@ -16,13 +16,20 @@
     "backup": "node tools/backup.js",
     "cert:keygen": "node tools/keygen.js",
     "cert:sign": "node tools/sign-work.js",
-    "cert:revoke": "node tools/revoke-key.js"
+    "cert:revoke": "node tools/revoke-key.js",
+    "mac:install": "bash tools/mac-service.sh install",
+    "mac:restart": "bash tools/mac-service.sh restart",
+    "mac:status": "bash tools/mac-service.sh status",
+    "mac:logs": "bash tools/mac-service.sh logs",
+    "mac:stop": "bash tools/mac-service.sh stop",
+    "mac:uninstall": "bash tools/mac-service.sh uninstall"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",
     "express": "^5.3.0",
     "image-size": "^2.1.0",
     "multer": "^2.5.0",
-    "nodemailer": "^10.5.0"
+    "nodemailer": "^10.5.0",
+    "qrcode": "^1.5.4"
   }
 }

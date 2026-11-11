@@ -24,6 +24,9 @@ before you accept real customers.**
 - [ ] **E-mail deliverability** (SPF/DKIM), and send yourself every transactional e-mail once.
 - [ ] **Signing keys.** `certs/keys.json` is empty. Generate a key or copy your existing
       `keys.json`. Keep `private-key.pem` offline and backed up.
+- [ ] **Settle the domain before signing certificates.** The issuer identity inside every
+      certificate is your domain (`did:web:your-domain`), and photo links point to it. If the
+      domain changes later, every certificate must be signed again.
 - [ ] **Backups** scheduled and a restore tried once.
 - [ ] Delete the demo works if you ran `npm run seed`.
 
@@ -44,6 +47,12 @@ before you accept real customers.**
 - **EU/UK VAT and customs** on shipments abroad (the Terms put import duties on the buyer).
 - **Auction rules**, in particular the consequences of non-payment and the reserve mechanism,
   and whether any local rule on public auctions applies to you.
+- **Cloudflare.** If you host on the Mac mini behind Cloudflare Tunnel, Cloudflare processes
+  all visitor traffic. Name it in `HOSTING_LOCATION` (the guide gives the wording) and accept
+  Cloudflare's data processing addendum in your account.
+- **What a certificate proves.** The digital signature proves the certificate was issued by
+  whoever controls your domain and signing key, and that it was not altered. It is your own
+  declaration of authorship; it is not a third-party appraisal or a registry entry.
 - **Newsletter.** The site records opt-in consent but does not send newsletters. Whatever tool
   you use must mail only people with "Avisos: Sí" in `/admin/usuarios`, include an unsubscribe
   link, and be added to the list of recipients in the Privacy Notice.
@@ -59,6 +68,8 @@ If you suffer a data breach, the notice commits you to telling affected people w
 ## Known limits of this version
 
 - Single server instance only (see DEPLOY.md).
+- Certificates carry no trusted third-party timestamp: the issue date is the one you sign.
+- The Mac mini installer (`npm run mac:install`) has not been run on a real Mac yet.
 - No two-factor authentication for the admin account: use a long unique password. Admin
   sessions expire after 12 hours of inactivity.
 - Photos are served exactly as uploaded (required for the certificate hash), so upload

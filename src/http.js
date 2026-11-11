@@ -18,7 +18,6 @@ export function securityHeaders(config) {
     "frame-ancestors 'none'",
     // El pago con PayPal es una redirección tras enviar un formulario propio.
     "form-action 'self' https://www.paypal.com https://www.sandbox.paypal.com",
-    ...(config.production ? ['upgrade-insecure-requests'] : []),
   ].join('; ');
   return (req, res, next) => {
     res.setHeader('Content-Security-Policy', csp);

@@ -1,6 +1,6 @@
 // Páginas públicas: portada, galería, obra, subastas y certificado.
-import { html, jsonScript } from '../lib/html.js';
-import { fmtMoney, fmtDateTime, isoDate } from '../lib/util.js';
+import { html, raw, jsonScript } from '../lib/html.js';
+import { fmtMoney, fmtDate, fmtDateTime, isoDate } from '../lib/util.js';
 import { page, check, formError } from './layout.js';
 
 const vtName = (code) => `obra-${String(code).replace(/[^A-Za-z0-9_-]/g, '_')}`;
@@ -26,7 +26,7 @@ export function homePage(req) {
     body: html`
     <h1 class="sr">${req.site.name}</h1>
     <div class="stage" aria-hidden="true">
-      ${words.map((w, i) => html`<div class="word${i === 0 ? ' active' : ''}"><span data-t="${w}">${w}</span><i class="caret"></i></div>`)}
+      ${words.map((w, i) => html`<div class="word${i === 0 ? ' active' : ''}"><span data-t="${w}">${w}</span></div>`)}
     </div>
     <a class="enter show" href="/galeria">Entrar a la galería</a>`,
   });
@@ -166,6 +166,7 @@ export function workPage(req, work, view = {}) {
           ${work.technique ? html`<div>${work.technique}</div>` : ''}
           ${work.dimensions ? html`<div>${work.dimensions}</div>` : ''}
           ${work.year ? html`<div>${work.year}</div>` : ''}
+          ${work.inscriptions ? html`<div>${work.inscriptions}</div>` : ''}
         </div>
         ${work.description ? html`<p class="desc">${work.description}</p>` : ''}
         ${panel}
@@ -207,28 +208,92 @@ export function auctionsPage(req, auctions, states) {
   });
 }
 
-export function certificatePage(req, { work = null, serverCheck = null } = {}) {
+// Campos del certificado, sea una credencial W3C o una ficha del formato anterior.
+function certFields(cert) {
+  if (cert.credentialSubject) {
+    const s = cert.credentialSubject;
+    const proof = cert.proof || {};
+    return {
+      code: s.identifier, title: s.name, artist: s.creator?.name || cert.issuer?.name, artform: s.artform, medium: s.artMedium,
+      size: s.size, year: s.dateCreated, edition: s.artEdition, inscriptions: s.inscriptions, features: s.distinguishingFeatures,
+      owner: s.currentOwner, issued: cert.validFrom, statement: cert.description, description: s.description,
+      credentialId: cert.id, issuer: typeof cert.issuer === 'string' ? cert.issuer : cert.issuer?.id,
+      key: String(proof.verificationMethod || '').split('#')[1], signature: proof.proofValue,
+    };
+  }
+  return {
+    code: cert.id, title: cert.titulo, medium: cert.tecnica, size: cert.dimensiones, year: cert.anio, owner: cert.propietarioActual,
+    issued: cert.fechaRegistro, description: cert.descripcion, key: cert.publicKeyBase64, signature: cert.signature, legacy: true,
+  };
+}
+const short = (v) => (v && v.length > 26 ? `${v.slice(0, 12)}…${v.slice(-10)}` : v || '');
+
+export function certificatePage(req, { work = null, cert = null, serverCheck = null, qr = '', url = '' } = {}) {
+  const f = cert ? certFields(cert) : null;
+  const photo = work?.photos[0];
+  const row = (label, value) => (value ? html`<dt>${label}</dt><dd>${value}</dd>` : '');
   return page(req, {
     title: work ? `Certificado: ${work.title}` : 'Verificar certificado',
-    scripts: ['verify.js'],
+    scripts: ['vc.js', 'verify.js'],
+    bodyClass: 'certpage',
     body: html`
-    <section class="sheet" id="verify" data-cert-url="${work ? `/obra/${work.code}/certificado.json` : ''}" data-work-url="${work ? `/obra/${work.code}` : ''}">
-      <div id="content">
-        ${work ? html`<p class="note">Verificando certificado…</p>` : html`
-          <h1>Verificar un certificado</h1>
-          <p class="desc">Pega o sube la ficha JSON de una obra para comprobar su firma.</p>`}
-      </div>
-      <details class="fallback"${work ? '' : ' open'}>
-        <summary>${work ? 'Verificar otra ficha manualmente' : 'Ficha a verificar'}</summary>
-        <label class="sr" for="manualJson">JSON de la obra</label>
-        <textarea id="manualJson" placeholder="Pega aquí el JSON de la obra"></textarea>
+    <section class="sheet wide" id="verify" data-cert-url="${work ? `/obra/${work.code}/certificado.json` : ''}">
+      ${f ? html`
+      <article class="certificate" id="certificate">
+        <header>
+          <p class="c-kicker">Certificado de autenticidad</p>
+          <h1>${f.title}</h1>
+          ${f.artist ? html`<p class="c-artist">${f.artist}</p>` : ''}
+        </header>
+        <div class="c-body">
+          ${photo ? html`<img src="/media/${photo.file}" width="${photo.width}" height="${photo.height}" alt="${work.title}">` : ''}
+          <dl class="kv">
+            ${row('Código', f.code)}
+            ${row('Tipo de objeto', f.artform)}
+            ${row('Técnica y materiales', f.medium)}
+            ${row('Medidas', f.size)}
+            ${row('Fecha', f.year)}
+            ${row('Edición', f.edition)}
+            ${row('Inscripciones y marcas', f.inscriptions)}
+            ${row('Rasgos distintivos', f.features)}
+            ${row('Propietario', f.owner)}
+            ${row('Emitido', f.issued ? fmtDate(Date.parse(f.issued)) : '')}
+          </dl>
+        </div>
+        ${f.statement ? html`<p class="c-statement">${f.statement}</p>` : ''}
+        <div class="c-verify">
+          <div class="stamp-zone"><div class="stamp" id="stamp"></div></div>
+          <p class="vstatus pending" id="vstatus" role="status">Verificando la firma en tu navegador…</p>
+          <div id="vnotes"></div>
+          <noscript><p class="note">${serverCheck?.ok
+            ? 'El servidor comprobó la firma de este certificado y es auténtica. Activa JavaScript para verificarla tú mismo/a en tu navegador.'
+            : `El servidor no pudo validar este certificado: ${serverCheck?.reason ?? ''}`}</p></noscript>
+        </div>
+        <footer class="c-foot">
+          <div class="qr" aria-hidden="true">${raw(qr)}</div>
+          <div>
+            <p>Verifica este certificado en línea:<br><strong>${url}</strong></p>
+            <p class="c-tech">${f.credentialId ? html`Credencial ${f.credentialId}<br>` : ''}${f.issuer ? html`Emisor ${f.issuer}<br>` : ''}Llave ${short(f.key)}<br>Firma ${short(f.signature)}</p>
+            <p class="c-tech">${f.legacy ? 'Formato anterior: firma Ed25519 sobre JSON canónico.' : 'W3C Verifiable Credentials 2.0 · Data Integrity eddsa-jcs-2022 (Ed25519) · did:web'}</p>
+          </div>
+        </footer>
+      </article>
+      <p class="c-actions noprint">
+        <button type="button" class="btn ghost" data-print>Imprimir o guardar como PDF</button>
+        <a class="link" href="/obra/${work.code}/certificado.json" download="${work.code}.json">Descargar credencial (JSON)</a>
+        <a class="link" href="/obra/${work.code}">Ver la obra</a>
+      </p>` : html`
+      <h1>Verificar un certificado</h1>
+      <p class="lead">Pega o sube el archivo JSON de un certificado para comprobar su firma.</p>`}
+      <details class="fallback noprint"${work ? '' : ' open'}>
+        <summary>${work ? 'Verificar otro certificado manualmente' : 'Certificado a verificar'}</summary>
+        <label class="sr" for="manualJson">JSON del certificado</label>
+        <textarea id="manualJson" placeholder="Pega aquí el JSON del certificado"></textarea>
         <input type="file" id="manualFile" accept="application/json,.json" aria-label="Subir archivo JSON">
         <button type="button" class="btn" id="manualBtn">Verificar</button>
+        <div id="manual-result"></div>
       </details>
-      <noscript><p class="note">${serverCheck
-        ? (serverCheck.ok ? 'El servidor comprobó la firma de este certificado y es auténtica. Activa JavaScript para verificarla tú mismo/a en tu navegador.' : `El servidor no pudo validar este certificado: ${serverCheck.reason}`)
-        : 'Activa JavaScript para verificar certificados en tu navegador.'}</p></noscript>
-      <p class="fine">La verificación ocurre en tu navegador: comprueba la firma Ed25519 de la ficha contra el <a class="link" href="/llaves.json">historial público de llaves</a> del artista y la huella SHA-256 de cada foto.</p>
+      <p class="fine noprint">La verificación ocurre en tu navegador y cualquiera puede repetirla: se comprueba la firma Ed25519 de la credencial (estándar W3C Verifiable Credentials 2.0, suite <code>eddsa-jcs-2022</code>) contra las llaves que el artista publica en su <a class="link" href="/.well-known/did.json">documento DID</a>, y la huella SHA-256 de cada foto.</p>
     </section>`,
   });
 }

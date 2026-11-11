@@ -83,22 +83,35 @@ export function adminRoutes(ctx) {
   r.post('/obras/:id/fotos/:pid/eliminar', workAction((req, id) => works.deletePhoto(ctx, id, Number(req.params.pid))));
   r.post('/obras/:id/fotos/:pid/primera', workAction((req, id) => works.makePhotoFirst(ctx, id, Number(req.params.pid))));
 
-  // Ficha sin firmar para el certificado. El nombre del propietario solo se incluye si
-  // quien compró lo autorizó expresamente.
-  r.get('/obras/:id/ficha.json', (req, res) => {
+  // Credencial sin firmar. El nombre del propietario solo se incluye si quien compró lo
+  // autorizó expresamente.
+  const ownerOf = (work) => {
+    const sold = ctx.db.prepare(`SELECT * FROM orders WHERE work_id = ? AND status IN ('paid','shipped','delivered') ORDER BY id DESC LIMIT 1`).get(work.id);
+    if (!sold) return `${ctx.config.site.artist} (artista)`;
+    return (sold.owner_name_public && getUser(ctx, sold.user_id)?.name) || 'Colección privada';
+  };
+  r.get('/obras/:id/credencial.json', (req, res) => {
     const work = works.getById(ctx, idOf(req));
     if (!work) throw new AppError('Obra no encontrada.', { status: 404 });
-    const sold = ctx.db.prepare(`SELECT * FROM orders WHERE work_id = ? AND status IN ('paid','shipped','delivered') ORDER BY id DESC LIMIT 1`).get(work.id);
-    let owner = `${ctx.config.site.artist} (artista)`;
-    if (sold) owner = (sold.owner_name_public && getUser(ctx, sold.user_id)?.name) || 'Colección privada';
     res.setHeader('Content-Disposition', `attachment; filename="${work.code}.json"`);
-    res.type('application/json').send(JSON.stringify(works.unsignedFicha(ctx, work, owner), null, 2) + '\n');
+    res.type('application/json').send(JSON.stringify(works.unsignedCredential(ctx, work, ownerOf(work)), null, 2) + '\n');
   });
 
+  // Publicar el certificado firmado: como archivo (firmado con la herramienta de línea de
+  // comandos) o como JSON (firmado en el navegador del artista).
   r.post('/obras/:id/certificado', upload.single('cert'), workAction((req, id) => {
     if (!req.file) throw new AppError('Elige el archivo .json firmado.');
     works.setCertificate(ctx, id, req.file.buffer.toString('utf8'), req.user);
   }));
+  r.post('/obras/:id/certificado.json', (req, res) => {
+    try {
+      works.setCertificate(ctx, idOf(req), req.body, req.user);
+      res.json({ ok: true });
+    } catch (err) {
+      if (!(err instanceof AppError)) throw err;
+      res.status(err.status).json({ error: err.message });
+    }
+  });
 
   r.post('/obras/:id/subasta', workAction((req, id) => {
     const b = req.body ?? {};

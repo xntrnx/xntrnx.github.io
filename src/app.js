@@ -51,7 +51,7 @@ export function createApp(ctx) {
   });
 
   app.use(express.urlencoded({ extended: false, limit: '100kb' }));
-  app.use(express.json({ limit: '20kb' }));
+  app.use(express.json({ limit: '200kb' }));
   app.use(originCheck(config));
   app.use(sessionLoader(ctx));
 

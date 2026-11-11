@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { imageSize } from 'image-size';
 import { AppError, clean, cleanLine, parsePesos } from '../lib/util.js';
-import { verifyCertificate } from '../lib/cert.js';
+import { verifyCertificate, didWeb, sriFromHex, VC_CONTEXT } from '../lib/cert.js';
 import { audit } from './users.js';
 
 const CODE_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{1,39}$/;
@@ -76,6 +76,9 @@ function parseFields(input) {
     year,
     dimensions: cleanLine(input.dimensions, 80) || null,
     description: clean(input.description, 4000) || null,
+    artform: cleanLine(input.artform, 80) || null,
+    inscriptions: clean(input.inscriptions, 600) || null,
+    features: clean(input.features, 600) || null,
     price_cents,
     position: Number.isFinite(position) ? position : 0,
   };
@@ -87,8 +90,8 @@ export function createWork(ctx, input, admin) {
   const f = parseFields(input);
   const now = ctx.now();
   try {
-    const r = ctx.db.prepare(`INSERT INTO works (code, title, technique, year, dimensions, description, price_cents, status, position, created_at, updated_at)
-      VALUES (?,?,?,?,?,?,?,'draft',?,?,?)`).run(code, f.title, f.technique, f.year, f.dimensions, f.description, f.price_cents, f.position, now, now);
+    const r = ctx.db.prepare(`INSERT INTO works (code, title, technique, year, dimensions, description, artform, inscriptions, features, price_cents, status, position, created_at, updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,'draft',?,?,?)`).run(code, f.title, f.technique, f.year, f.dimensions, f.description, f.artform, f.inscriptions, f.features, f.price_cents, f.position, now, now);
     audit(ctx, { userId: admin?.id, action: 'work.create', entity: 'work', entityId: code });
     return Number(r.lastInsertRowid);
   } catch (err) {
@@ -110,8 +113,9 @@ export function updateWork(ctx, id, input, admin) {
     if (wanted !== 'available' && activeAuctionOf(ctx, id)) throw new AppError('La obra tiene una subasta activa. Cancélala antes de cambiar el estado.', { field: 'status' });
     status = wanted;
   }
-  ctx.db.prepare(`UPDATE works SET title = ?, technique = ?, year = ?, dimensions = ?, description = ?, price_cents = ?, position = ?, status = ?, updated_at = ? WHERE id = ?`)
-    .run(f.title, f.technique, f.year, f.dimensions, f.description, f.price_cents, f.position, status, ctx.now(), id);
+  ctx.db.prepare(`UPDATE works SET title = ?, technique = ?, year = ?, dimensions = ?, description = ?, artform = ?, inscriptions = ?, features = ?,
+      price_cents = ?, position = ?, status = ?, updated_at = ? WHERE id = ?`)
+    .run(f.title, f.technique, f.year, f.dimensions, f.description, f.artform, f.inscriptions, f.features, f.price_cents, f.position, status, ctx.now(), id);
   audit(ctx, { userId: admin?.id, action: 'work.update', entity: 'work', entityId: work.code });
 }
 
@@ -163,30 +167,75 @@ export function makePhotoFirst(ctx, workId, photoId) {
   ctx.db.prepare('UPDATE work_photos SET position = ? WHERE id = ?').run(min - 1, p.id);
 }
 
-// Ficha sin firmar, lista para firmarse fuera de línea con tools/sign-work.js.
-export function unsignedFicha(ctx, work, ownerLabel) {
+const MEDIA_TYPE = { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
+const photoUrl = (ctx, p) => `${ctx.config.baseUrl}/media/${p.file}`;
+
+// Términos propios del certificado que no existen en schema.org (documentados en /ns/coa).
+export const coaContext = (baseUrl) => {
+  const ns = `${baseUrl}/ns/coa#`;
   return {
-    id: work.code,
-    titulo: work.title,
-    anio: work.year,
-    tecnica: work.technique,
-    dimensiones: work.dimensions,
-    descripcion: work.description,
-    propietarioActual: ownerLabel,
-    fechaRegistro: new Date(ctx.now()).toISOString().slice(0, 10),
-    fotos: work.photos.map((p) => `/media/${p.file}`),
-    fotosSha256: work.photos.map((p) => p.sha256),
+    '@vocab': 'https://schema.org/',
+    ArtworkAuthenticityCredential: `${ns}ArtworkAuthenticityCredential`,
+    inscriptions: `${ns}inscriptions`,
+    distinguishingFeatures: `${ns}distinguishingFeatures`,
+    currentOwner: `${ns}currentOwner`,
+  };
+};
+
+// Credencial sin firmar (W3C Verifiable Credential 2.0), lista para firmarse en el equipo
+// del artista. Describe la obra con schema.org/VisualArtwork y los campos de Object ID, y
+// amarra cada foto con su huella SHA-256 (digestSRI).
+export function unsignedCredential(ctx, work, ownerLabel) {
+  const { baseUrl, site } = ctx.config;
+  const drop = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null && v !== undefined && v !== ''));
+  return {
+    '@context': [VC_CONTEXT, coaContext(baseUrl)],
+    id: `urn:uuid:${crypto.randomUUID()}`,
+    type: ['VerifiableCredential', 'ArtworkAuthenticityCredential'],
+    name: 'Certificado de autenticidad',
+    description: `${site.artist} declara que la obra aquí descrita es una pieza original y única de su autoría.`,
+    issuer: { id: didWeb(baseUrl), name: site.artist },
+    validFrom: new Date(ctx.now()).toISOString().replace(/\.\d+Z$/, 'Z'),
+    credentialSubject: drop({
+      id: `${baseUrl}/obra/${work.code}`,
+      type: 'VisualArtwork',
+      identifier: work.code,
+      name: work.title,
+      creator: { type: 'Person', name: site.artist },
+      artform: work.artform,
+      artMedium: work.technique,
+      dateCreated: work.year ? String(work.year) : null,
+      size: work.dimensions,
+      artEdition: 'Pieza única',
+      description: work.description,
+      inscriptions: work.inscriptions,
+      distinguishingFeatures: work.features,
+      currentOwner: ownerLabel,
+      image: work.photos.map((p) => photoUrl(ctx, p)),
+    }),
+    relatedResource: work.photos.map((p) => ({
+      id: photoUrl(ctx, p), mediaType: MEDIA_TYPE[p.file.split('.').pop()], digestSRI: sriFromHex(p.sha256),
+    })),
   };
 }
 
+// Publica un certificado firmado. Solo se aceptan credenciales W3C emitidas por este sitio,
+// firmadas con una llave vigente, de esta obra y cuyas huellas coincidan con las fotos actuales.
 export function setCertificate(ctx, workId, jsonText, admin) {
-  const work = ctx.db.prepare('SELECT * FROM works WHERE id = ?').get(workId);
+  const work = getById(ctx, workId);
   if (!work) throw new AppError('Obra no encontrada.', { status: 404 });
   let cert;
-  try { cert = JSON.parse(jsonText); } catch { throw new AppError('El archivo no es JSON válido.'); }
-  const result = verifyCertificate(cert, ctx.keys());
-  if (!result.ok) throw new AppError(`No se guardó: ${result.reason}`);
-  if (cert.id !== work.code) throw new AppError(`La ficha es de la obra "${cert.id}", no de "${work.code}".`);
+  try { cert = typeof jsonText === 'string' ? JSON.parse(jsonText) : jsonText; } catch { throw new AppError('El archivo no es JSON válido.'); }
+  const result = verifyCertificate(cert, ctx.keys(), { did: didWeb(ctx.config.baseUrl) });
+  if (!result.ok) throw new AppError(`No se publicó: ${result.reason}`);
+  if (result.format !== 'vc') throw new AppError('No se publicó: el archivo usa el formato anterior. Descarga la credencial sin firmar desde esta página y fírmala de nuevo.');
+  const subject = cert.credentialSubject || {};
+  if (subject.identifier !== work.code) throw new AppError(`No se publicó: el certificado es de la obra "${subject.identifier}", no de "${work.code}".`);
+  const signed = new Map((cert.relatedResource || []).map((r) => [r.id, r.digestSRI]));
+  const current = work.photos.map((p) => [photoUrl(ctx, p), sriFromHex(p.sha256)]);
+  if (signed.size !== current.length || current.some(([url, sri]) => signed.get(url) !== sri)) {
+    throw new AppError('No se publicó: las fotos firmadas no coinciden con las fotos actuales de la obra. Descarga de nuevo la credencial sin firmar y fírmala.');
+  }
   ctx.db.prepare('UPDATE works SET certificate_json = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(cert, null, 2), ctx.now(), workId);
-  audit(ctx, { userId: admin?.id, action: 'work.certificate', entity: 'work', entityId: work.code });
+  audit(ctx, { userId: admin?.id, action: 'work.certificate', entity: 'work', entityId: work.code, meta: { credential: cert.id } });
 }

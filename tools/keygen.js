@@ -51,3 +51,4 @@ console.log(isRotation ? 'Llave rotada.' : 'Llave generada.');
 console.log(`\n  ${privatePath}  (NO subir a git ni al servidor)`);
 console.log(`  ${keysPath}  (sí va al repositorio; vuelve a desplegar el sitio)`);
 console.log('\nLlave pública nueva (base64):', publicKeyBase64);
+console.log('Si el sitio está corriendo, no hace falta reiniciarlo: la llave ya aparece en /.well-known/did.json');

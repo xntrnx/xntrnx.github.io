@@ -1,19 +1,19 @@
-// sign-work.js — firma la ficha de una obra con tu llave privada (fuera de línea).
+// sign-work.js — firma el certificado de una obra con tu llave privada, en tu equipo.
 //
 //   npm run cert:sign -- TLK-2026-014.json
 //
-// 1. En el panel de administración, descarga la "ficha sin firmar" de la obra.
-// 2. Corre este comando: quita cualquier firma anterior, ordena las llaves de forma
-//    determinista, firma ese texto exacto con Ed25519 y reescribe el archivo agregando
-//    "signature" y "publicKeyBase64".
+// 1. En el panel de administración, descarga la "credencial sin firmar" de la obra.
+// 2. Corre este comando: agrega al archivo la prueba ("proof") según el estándar W3C
+//    Verifiable Credentials 2.0 / Data Integrity eddsa-jcs-2022 (Ed25519 sobre JCS).
 // 3. Sube el archivo firmado en el panel de administración.
 //
-// Cualquier cambio posterior al archivo (una fecha, una palabra) invalida la firma.
+// (También puedes firmar directamente en el panel, sin usar este comando.)
+// Cualquier cambio posterior al archivo invalida la firma.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { canonicalText } from '../src/lib/cert.js';
+import { signCredential, rawPublicKeyOf, multikeyFromRaw } from '../src/lib/cert.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const filePath = process.argv[2];
@@ -29,13 +29,13 @@ if (!fs.existsSync(privatePath)) {
 }
 
 const privateKey = crypto.createPrivateKey(fs.readFileSync(privatePath, 'utf8'));
-const publicRaw = crypto.createPublicKey(privateKey).export({ type: 'spki', format: 'der' });
-const publicKeyBase64 = publicRaw.subarray(publicRaw.length - 32).toString('base64');
+const raw = rawPublicKeyOf(privateKey);
+const publicKeyBase64 = raw.toString('base64');
 
 const keys = fs.existsSync(keysPath) ? JSON.parse(fs.readFileSync(keysPath, 'utf8')) : [];
 const entry = keys.find((k) => k.publicKeyBase64 === publicKeyBase64);
 if (!entry) {
-  console.error('Esta llave no está en certs/keys.json, así que el sitio rechazaría la firma.\nAgrégala con `npm run cert:keygen` (llave nueva) o restaura tu keys.json, y vuelve a desplegar.');
+  console.error('Esta llave no está en certs/keys.json, así que el sitio rechazaría la firma.\nAgrégala con `npm run cert:keygen` (llave nueva) o restaura tu keys.json.');
   process.exit(1);
 }
 if (entry.revoked) {
@@ -43,13 +43,15 @@ if (entry.revoked) {
   process.exit(1);
 }
 
-const work = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-delete work.signature;
-delete work.publicKeyBase64;
-const signature = crypto.sign(null, Buffer.from(canonicalText(work), 'utf8'), privateKey);
-work.publicKeyBase64 = publicKeyBase64;
-work.signature = signature.toString('base64');
-fs.writeFileSync(filePath, JSON.stringify(work, null, 2) + '\n');
+const credential = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+const issuer = typeof credential.issuer === 'string' ? credential.issuer : credential.issuer?.id;
+if (!credential['@context'] || !issuer) {
+  console.error('Ese archivo no es una credencial sin firmar. Descárgala desde el panel de administración (página de la obra).');
+  process.exit(1);
+}
+const signed = signCredential(credential, privateKey, { verificationMethod: `${issuer}#${multikeyFromRaw(raw)}` });
+fs.writeFileSync(filePath, JSON.stringify(signed, null, 2) + '\n');
 
 console.log(`Firmado: ${filePath}`);
-console.log(`Obra: ${work.id || "(sin campo 'id')"} · Propietario en la ficha: ${work.propietarioActual || '(vacío)'}`);
+console.log(`Obra: ${signed.credentialSubject?.identifier} · Propietario: ${signed.credentialSubject?.currentOwner || '(vacío)'}`);
+console.log(`Emisor: ${issuer}`);

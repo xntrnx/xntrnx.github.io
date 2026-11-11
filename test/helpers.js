@@ -7,7 +7,7 @@ import crypto from 'node:crypto';
 import { loadConfig } from '../src/config.js';
 import { createContext } from '../src/context.js';
 import { createApp } from '../src/app.js';
-import { canonicalText } from '../src/lib/cert.js';
+import { signCredential, multikeyFromRaw, jcs } from '../src/lib/cert.js';
 
 export async function boot(envOverrides = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'galeria-test-'));
@@ -123,12 +123,20 @@ export function makeSigner(t, { register = true, revoked = false } = {}) {
     keys.push({ publicKeyBase64, created: '2026-01-01', revoked });
     fs.writeFileSync(t.config.keysFile, JSON.stringify(keys));
   }
-  return (ficha) => {
+  const raw = der.subarray(der.length - 32);
+  // Firma una credencial W3C (formato vigente).
+  const sign = (credential) => signCredential(credential, privateKey, {
+    verificationMethod: `${typeof credential.issuer === 'string' ? credential.issuer : credential.issuer.id}#${multikeyFromRaw(raw)}`,
+  });
+  // Firma una ficha en el formato anterior del sitio.
+  sign.legacy = (ficha) => {
     const copy = { ...ficha };
     delete copy.signature; delete copy.publicKeyBase64;
-    const signature = crypto.sign(null, Buffer.from(canonicalText(copy), 'utf8'), privateKey).toString('base64');
-    return { ...copy, publicKeyBase64, signature };
+    return { ...copy, publicKeyBase64, signature: crypto.sign(null, Buffer.from(jcs(copy), 'utf8'), privateKey).toString('base64') };
   };
+  sign.publicKeyBase64 = publicKeyBase64;
+  sign.multikey = multikeyFromRaw(raw);
+  return sign;
 }
 
 // PNG mínimo válido de 1x1 (para probar la subida de fotos).

@@ -34,9 +34,10 @@ function head({ title, description, noindex, site }) {
 <title>${title ? `${title} · ${site.name}` : site.name}</title>
 ${description ? html`<meta name="description" content="${description}">` : ''}
 ${noindex ? raw('<meta name="robots" content="noindex">') : ''}
-<meta name="color-scheme" content="dark">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#D7E5F3">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<link rel="preload" href="/fonts/courier-prime-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/cormorant-garamond-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/css/site.css">
 </head>`;
 }
