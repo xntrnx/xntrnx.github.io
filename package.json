@@ -1,0 +1,28 @@
+{
+  "name": "galeria",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Galería digital full-stack: catálogo, cuentas, pedidos, subastas y certificados de autenticidad verificables.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test --test-concurrency=1 \"test/*.test.js\"",
+    "seed": "node tools/seed.js",
+    "admin:create": "node tools/create-admin.js",
+    "backup": "node tools/backup.js",
+    "cert:keygen": "node tools/keygen.js",
+    "cert:sign": "node tools/sign-work.js",
+    "cert:revoke": "node tools/revoke-key.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "express": "^5.3.0",
+    "image-size": "^2.1.0",
+    "multer": "^2.5.0",
+    "nodemailer": "^10.5.0"
+  }
+}

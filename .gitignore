@@ -1,0 +1,12 @@
+node_modules/
+data/
+.env
+.env.*
+!.env.example
+
+# Llave privada de firma de certificados: NUNCA se sube.
+private-key.pem
+*.pem
+
+.DS_Store
+*.log
